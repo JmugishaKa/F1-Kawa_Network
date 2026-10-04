@@ -107,3 +107,42 @@ Honestly the two-process setup (Redis + a separate worker) was the part I went
 back and forth on most while building this. It's more to run locally than I'd
 like, but a single-process version wouldn't actually survive the outages the
 brief describes, so I kept it.
+
+
+----------------------------------------------------------------------------------------------------
+
+## F2: Compliance retrofit
+
+For the full reasoning, see: [DECISION_LOG.md](DECISION_LOG.md) and  Access matrix: [docs/RBAC_MATRIX.md](docs/RBAC_MATRIX.md).
+
+### Auth
+
+I have two kinds, and both work at once (`DEFAULT_AUTHENTICATION_CLASSES` tries each in order):
+
+- *Session* (dashboard): `POST /api/auth/login/` with `{"username", "password"}` which sets session cookie; and `POST /api/auth/logout/` that clears it; `GET /api/auth/me/` which also returns the logged-in user's role/station.
+
+- *JWT* (for buyer/registry integrations): `POST /api/auth/token/` used with `{"username", "password"}` outputs `{"access", "refresh"}`; send `Authorization: Bearer <access>` on subsequent requests. `POST /api/auth/token/refresh/` with `{"refresh"}` gets a new access token (which rotates on use).
+
+### RBAC
+
+`GET /api/plots/`, `GET /api/deliveries/` (list and retrieve), and farmer `national_id` visibility are governed by role - see `docs/RBAC_MATRIX.md` for the table and `core/rbac.py` for the one place it's enforced. Unauthenticated requests to those endpoints get `401`/`403`.
+
+```bash
+python manage.py seed_rbac_fixtures   # creates field_agent_user / exporter_user / auditor_user, all password GraderPass123!
+```
+
+Quick check:
+```bash
+curl -c cj.txt -X POST localhost:8000/api/auth/login/ -H 'Content-Type: application/json' \
+  -d '{"username":"field_agent_user","password":"GraderPass123!"}'
+curl -b cj.txt localhost:8000/api/plots/          # only that agent's station, full coordinates
+curl -b cj.txt localhost:8000/api/farmers/1/      # national_id masked to last 4 digits
+```
+
+### Audit log
+
+`GET /api/access-log/` (compliance_auditor only) - who viewed a plot's coordinates or a farmer's identity data, at what precision, never the value itself. Populated automatically whenever those fields are actually serialized into a response.
+
+### Known limits (F2 part)
+
+There's no JWT revocation before expiry. Exporter coordinate coarsening recomputes each sector's centroid per plot per request (no caching) - seems fine at pilot scale, an N+1-shaped cost at real scale; check on the Decision Log Task 1.3. `docs/autograding/F2_CONTRACT.md` is a placeholder pending the real contract.
