@@ -145,8 +145,6 @@ class RiskCheckTaskTests(Base):
         self.assertIsNotNone(plot.risk_checked_at)
         self.assertEqual(plot.risk_attempts.get().outcome, "clear")
 
-
-
     def test_failure_records_attempt_and_backs_off(self):
         plot = self.make_plot()
         with mock.patch("core.registry.check_plot", side_effect=registry.RegistryUnavailable("down")):
