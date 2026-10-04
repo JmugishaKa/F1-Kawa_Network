@@ -6,15 +6,27 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
+
 from core import registry, tasks
-from core.models import Delivery, Farmer, Plot, PriceSchedule, RiskCheckAttempt, Sector, WashingStation
+from core.models import Delivery, Farmer, Plot, PriceSchedule, RiskCheckAttempt, Sector, UserProfile, WashingStation
+from core.tests.test_rbac import User
 
 
 class Base(APITestCase):
+    
     def setUp(self):
         self.sector = Sector.objects.create(name="Nyaruguru")
         self.station = WashingStation.objects.create(name="Nyaruguru WS", sector=self.sector)
         self.farmer = Farmer.objects.create(full_name="Jean Claude", phone="0788123456")
+
+
+    def login_as_exporter(self):
+        """F2 gated GET /api/plots/ and /api/deliveries/ - exporter_partner sees
+        everything unscoped, which matches what the F1 tests expect."""
+        
+        user = User.objects.create_user(username="f1test-exporter", password="x")
+        UserProfile.objects.create(user=user, role=UserProfile.Role.EXPORTER_PARTNER)
+        self.client.force_login(user)
 
     def make_plot(self, status=Plot.RiskStatus.PENDING, name="Hillside"):
         return Plot.objects.create(
@@ -28,6 +40,8 @@ class FarmerTests(Base):
         r = self.client.post("/api/farmers/", {"full_name": "Marie Uwase", "phone": "+250788000111"})
         self.assertEqual(r.status_code, 201)
 
+
+
     def test_validation_error_is_structured(self):
         r = self.client.post("/api/farmers/", {"full_name": "M", "phone": "abc"})
         self.assertEqual(r.status_code, 400)
@@ -35,9 +49,11 @@ class FarmerTests(Base):
         self.assertIn("phone", r.json()["error"]["fields"])
         self.assertIn("full_name", r.json()["error"]["fields"])
 
+
     def test_duplicate_phone_rejected(self):
         r = self.client.post("/api/farmers/", {"full_name": "Someone", "phone": "0788123456"})
         self.assertEqual(r.status_code, 400)
+
 
 
 class PlotTests(Base):
@@ -45,6 +61,8 @@ class PlotTests(Base):
         "farmer": self.farmer.pk, "name": "Hillside", "sector": self.sector.pk,
         "washing_station": self.station.pk, "area_hectares": "0.75", **kw,
     }
+
+
 
     @mock.patch("core.tasks.run_risk_check.apply_async")
     def test_plot_registration_queues_check_and_returns_pending(self, queued):
@@ -57,14 +75,19 @@ class PlotTests(Base):
         self.assertEqual(body["washing_station"], self.station.pk)
         queued.assert_called_once()
 
+
+
     def test_registration_does_not_wait_for_registry(self):
         with mock.patch("core.registry.check_plot", side_effect=lambda p: time.sleep(5)), \
              mock.patch("core.tasks.run_risk_check.apply_async"):
             start = time.monotonic()
+            
             with self.captureOnCommitCallbacks(execute=True):
                 r = self.client.post("/api/plots/", self.payload())
             self.assertEqual(r.status_code, 201)
             self.assertLess(time.monotonic() - start, 1.0)
+
+
 
     def test_broker_down_does_not_break_registration(self):
         with mock.patch("core.tasks.run_risk_check.apply_async", side_effect=ConnectionError("no broker")):
@@ -73,6 +96,7 @@ class PlotTests(Base):
         self.assertEqual(r.status_code, 201)
         self.assertEqual(Plot.objects.get().risk_status, "pending")
 
+
     def test_requires_sector_and_station(self):
         r = self.client.post("/api/plots/", {"farmer": self.farmer.pk, "name": "X", "area_hectares": "1"})
         self.assertEqual(r.status_code, 400)
@@ -80,9 +104,11 @@ class PlotTests(Base):
         self.assertIn("sector", fields)
         self.assertIn("washing_station", fields)
 
+
     def test_lat_without_lng_rejected(self):
         r = self.client.post("/api/plots/", self.payload(latitude="-2.5"))
         self.assertEqual(r.status_code, 400)
+
 
     def test_duplicate_plot_name_per_farmer(self):
         self.make_plot()
@@ -90,10 +116,14 @@ class PlotTests(Base):
         self.assertEqual(r.status_code, 400)
         self.assertIn("name", r.json()["error"]["fields"])
 
+
     def test_list_and_filter(self):
+        self.login_as_exporter()
         self.make_plot()
         r = self.client.get(f"/api/plots/?washing_station={self.station.pk}&risk_status=pending")
         self.assertEqual(r.json()["count"], 1)
+
+
 
     @mock.patch("core.tasks.run_risk_check.apply_async")
     def test_recheck_only_when_pending_or_failed(self, queued):
@@ -115,6 +145,8 @@ class RiskCheckTaskTests(Base):
         self.assertIsNotNone(plot.risk_checked_at)
         self.assertEqual(plot.risk_attempts.get().outcome, "clear")
 
+
+
     def test_failure_records_attempt_and_backs_off(self):
         plot = self.make_plot()
         with mock.patch("core.registry.check_plot", side_effect=registry.RegistryUnavailable("down")):
@@ -132,6 +164,7 @@ class RiskCheckTaskTests(Base):
         plot.refresh_from_db()
         self.assertEqual(plot.risk_status, "check_failed")
 
+
     def test_decided_plot_is_not_rechecked(self):
         plot = self.make_plot(Plot.RiskStatus.CLEAR)
         with mock.patch("core.registry.check_plot") as call:
@@ -139,6 +172,7 @@ class RiskCheckTaskTests(Base):
         call.assert_not_called()
 
     def test_attempts_endpoint(self):
+        self.login_as_exporter()
         plot = self.make_plot()
         with mock.patch("core.registry.check_plot", return_value=("flagged", "cleared")):
             tasks.perform_risk_check(plot.pk)
@@ -147,8 +181,10 @@ class RiskCheckTaskTests(Base):
 
 
 class DeliveryTests(Base):
+    
     def post(self, plot, **kw):
         return self.client.post("/api/deliveries/", {"plot": plot.pk, "weight_kg": "42.5", "grade": "A", **kw})
+
 
     def test_record_delivery_carries_provenance(self):
         plot = self.make_plot(Plot.RiskStatus.CLEAR)
@@ -161,6 +197,7 @@ class DeliveryTests(Base):
         self.assertEqual(body["washing_station"], self.station.pk)
         self.assertTrue(body["provenance_verified"])
 
+
     def test_unverified_plot_can_still_deliver_but_is_marked(self):
         for status in (Plot.RiskStatus.PENDING, Plot.RiskStatus.CHECK_FAILED):
             plot = self.make_plot(status, name=status)
@@ -169,10 +206,12 @@ class DeliveryTests(Base):
             self.assertFalse(r.json()["provenance_verified"])
             self.assertEqual(r.json()["plot_risk_status"], status)
 
+
     def test_flagged_plot_is_blocked(self):
         r = self.post(self.make_plot(Plot.RiskStatus.FLAGGED))
         self.assertEqual(r.status_code, 409)
         self.assertEqual(r.json()["error"]["code"], "plot_flagged")
+
 
     def test_validation(self):
         plot = self.make_plot()
@@ -183,6 +222,7 @@ class DeliveryTests(Base):
         self.assertEqual(self.post(plot, delivered_at=future).status_code, 400)
         self.assertEqual(self.client.post("/api/deliveries/", {"plot": 9999, "weight_kg": 1, "grade": "A"}).status_code, 400)
 
+
     def test_client_ref_makes_retries_idempotent(self):
         plot = self.make_plot()
         first = self.post(plot, client_ref="phone-1-0001")
@@ -192,7 +232,9 @@ class DeliveryTests(Base):
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(Delivery.objects.count(), 1)
 
+
     def test_feed_is_cursor_paginated_newest_first_and_compact(self):
+        self.login_as_exporter()
         plot = self.make_plot(Plot.RiskStatus.CLEAR)
         for i in range(30):
             self.post(plot)
@@ -208,11 +250,13 @@ class DeliveryTests(Base):
         self.assertEqual(len(page2["results"]), 5)
         self.assertFalse(set(ids) & {d["id"] for d in page2["results"]})
 
+
     def test_feed_query_count_is_constant(self):
+        self.login_as_exporter()
         plot = self.make_plot(Plot.RiskStatus.CLEAR)
         for i in range(10):
             self.post(plot)
-        with self.assertNumQueries(1):
+        with self.assertNumQueries(4):
             self.client.get("/api/deliveries/")
 
 
@@ -225,6 +269,7 @@ class PriceScheduleTests(Base):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["season"], "2026")
         self.assertEqual(len(r.json()["prices"]), 2)
-
+        
+           
     def test_empty_schedule(self):
         self.assertEqual(self.client.get("/api/price-schedule/").json()["prices"], [])
