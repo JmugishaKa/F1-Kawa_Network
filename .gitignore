@@ -1,5 +1,14 @@
+.DS_Store
+.env
+.env.local
+.pytest_cache/
+.ruff_cache/
 .venv/
 __pycache__/
-*.pyc
 db.sqlite3
-.env
+htmlcov/
+*.log
+*.pyc
+*.pyo
+*.pyd
+coverage.xml

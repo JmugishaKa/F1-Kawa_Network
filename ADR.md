@@ -16,7 +16,7 @@ Queueing itself is best-effort: if Redis is down, the plot is still saved and st
 
 ## What happens to a plot whose check never succeeds
 
-My position: **it keeps delivering, and its deliveries are visibly unverified.**
+Decision: **it keeps delivering, and its deliveries are visibly unverified.**
 
 | Plot status | Can deliveries be recorded? | Marked `provenance_verified`? |
 |---|---|---|
@@ -48,7 +48,7 @@ Consequences I accept: a plot later found `flagged` may already have unverified 
 
 Helps: **performance (latency), availability, resilience**. Stresses: **data integrity / traceability** and **operability** (a queue and a worker to monitor).
 
-## Task 4: the performance feature
+## Performance feature (Task 4)
 
 I chose the **cursor-paginated delivery feed** (`GET /api/deliveries/`), not a cached price schedule. It solves Emmanuel's problem first because his is the one that hurts: the feed is read constantly at harvest peak on 2G, and it grows by ~400 rows a day. The price schedule is a handful of rows that change once a season; it is already cheap, so caching it would add invalidation risk for no user-visible gain. `GET /api/price-schedule/` exists and is uncached.
 
@@ -60,13 +60,3 @@ Feed design choices: cursor pagination (no `COUNT(*)`, no skipped or repeated ro
 - **Block deliveries until a plot is `clear`:** best for traceability, but Emmanuel could not weigh a farmer whose plot was registered ten minutes ago; rejected.
 - **Threads or in-process background work instead of Celery:** no extra service, but tasks are lost on restart and there is no retry or back-off. Not survivable for later stages.
 - **Offset pagination:** simpler, but slower on deep pages and unstable while rows are inserted.
-
-
-## A note on how I got here
-
-This was my first time building a real async flow instead of just calling something
-synchronously. I went back and forth on Celery vs. just using threading - threading
-felt simpler to set up, but it doesn't survive the worker process restarting, and
-the brief is pretty explicit that the registry can be down for hours. That one
-sentence in the spec is basically what pushed me toward Celery + Redis even though
-it's more moving parts to run locally.

@@ -1,0 +1,29 @@
+openapi: 3.0.3
+info:
+  title: Kawa Network API
+  version: 1.0.0
+paths:
+  /api/status/:
+    get:
+      summary: API availability check
+      responses:
+        '200':
+          description: Service is available
+  /api/farmers/:
+    get:
+      summary: List farmers
+    post:
+      summary: Register a farmer
+  /api/plots/:
+    get:
+      summary: List plots
+    post:
+      summary: Register a plot
+  /api/deliveries/:
+    get:
+      summary: List deliveries
+    post:
+      summary: Record a delivery
+  /api/price-schedule/:
+    get:
+      summary: Current season price schedule

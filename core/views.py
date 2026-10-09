@@ -34,6 +34,11 @@ class FarmerViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,
     serializer_class = FarmerSerializer
     pagination_class = StandardPagination
     search_fields = ["full_name", "phone"]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [HasKawaRole()]
+        return super().get_permissions()
     # Who may REGISTER a farmer is unscoped by the F2 matrix (it only specifies
     # national_id visibility) - deliberately left open; see DECISION_LOG.md.
 
@@ -44,6 +49,12 @@ class PlotViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,
     serializer_class = PlotSerializer
     pagination_class = StandardPagination
     filterset_fields = ["farmer", "sector", "washing_station", "risk_status"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action in ("list", "retrieve"):
+            return scope_plot_queryset(qs, self.request.user)
+        return qs
 
     def get_permissions(self):
         # Matrix governs reads; registration/rechecking are unscoped (see DECISION_LOG.md).
@@ -120,6 +131,14 @@ class DeliveryViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin,
             if existing:
                 return Response(DeliverySerializer(existing).data, status=status.HTTP_200_OK)
         return super().create(request, *args, **kwargs)
+
+
+class StatusView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(responses={200: dict})
+    def get(self, request):
+        return Response({"status": "ok", "service": "kawa-network"})
 
 
 class PriceScheduleView(APIView):

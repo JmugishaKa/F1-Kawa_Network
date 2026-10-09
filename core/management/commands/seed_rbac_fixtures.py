@@ -23,22 +23,25 @@ User = get_user_model()
 GRADER_PASSWORD = "GraderPass123!"
 
 SEED_DATA = {
-    "sector": {"name": "Nyaruguru", "district": "Nyaruguru"},
-    "other_sector": {"name": "Huye", "district": "Huye"},  # second sector, so coarsening is actually testable
-    "station": {"name": "Nyaruguru Washing Station"},
-    "other_station": {"name": "Huye Washing Station"},
-    "farmer": {"full_name": "Jean Claude", "phone": "0788100001", "national_id": "1198880012345678"},
+    "sector_kigoma": {"name": "Kigoma", "district": "Kigoma"},
+    "sector_mbazi": {"name": "Mbazi", "district": "Mbazi"},
+    "station_nyaruguru": {"name": "Nyaruguru"},
+    "station_kamonyi": {"name": "Kamonyi"},
+    "farmer": {
+        "full_name": "Uwimana Béatrice",
+        "phone": "0788100001",
+        "national_id": "1198770123456789",
+        "member_number": "KWA-F-SEED-01",
+    },
     "plots": [
-        # plot_code, sector key, station key, lat, lng
-        {"plot_code": "PLOT-001", "sector": "sector", "station": "station", "lat": "-2.700000", "lng": "29.500000"},
-        {"plot_code": "PLOT-002", "sector": "sector", "station": "station", "lat": "-2.701000", "lng": "29.501000"},
-        {"plot_code": "PLOT-003", "sector": "other_sector", "station": "other_station", "lat": "-2.600000", "lng": "29.750000"},
-        {"plot_code": "PLOT-004", "sector": "other_sector", "station": "other_station", "lat": "-2.601000", "lng": "29.751000"},
+        {"plot_code": "KWA-SEED-K1", "sector": "sector_kigoma", "station": "station_nyaruguru", "lat": "-2.540000", "lng": "29.710000"},
+        {"plot_code": "KWA-SEED-K2", "sector": "sector_kigoma", "station": "station_nyaruguru", "lat": "-2.660000", "lng": "29.790000"},
+        {"plot_code": "KWA-SEED-M1", "sector": "sector_mbazi", "station": "station_kamonyi", "lat": "-2.510000", "lng": "29.520000"},
+        {"plot_code": "KWA-SEED-M2", "sector": "sector_mbazi", "station": "station_kamonyi", "lat": "-2.900000", "lng": "29.900000"},
     ],
     "deliveries": [
-        # plot_code, weight_kg, grade
-        {"plot_code": "PLOT-001", "weight_kg": "40.00", "grade": "A"},
-        {"plot_code": "PLOT-003", "weight_kg": "25.50", "grade": "B"},
+        {"plot_code": "KWA-SEED-K1", "weight_kg": "40.00", "grade": "A"},
+        {"plot_code": "KWA-SEED-M1", "weight_kg": "25.50", "grade": "B"},
     ],
 }
 
@@ -47,25 +50,35 @@ class Command(BaseCommand):
     help = "Create the fixed users/farmer/plots/deliveries the F2 autograder checks against (idempotent)."
 
     def handle(self, *args, **options):
-        sector = self._get_or_create_sector("sector")
-        other_sector = self._get_or_create_sector("other_sector")
-        station = self._get_or_create_station("station", sector)
-        other_station = self._get_or_create_station("other_station", other_sector)
+        sector_kigoma = self._get_or_create_sector("sector_kigoma")
+        sector_mbazi = self._get_or_create_sector("sector_mbazi")
+        station_nyaruguru = self._get_or_create_station("station_nyaruguru", sector_kigoma)
+        station_kamonyi = self._get_or_create_station("station_kamonyi", sector_mbazi)
 
         farmer_data = SEED_DATA["farmer"]
         farmer, _ = Farmer.objects.get_or_create(
             phone=farmer_data["phone"],
-            defaults={"full_name": farmer_data["full_name"], "national_id": farmer_data["national_id"]},
+            defaults={
+                "full_name": farmer_data["full_name"],
+                "national_id": farmer_data["national_id"],
+                "member_number": farmer_data["member_number"],
+                "cooperative": "Huye",
+            },
         )
+        if farmer.member_number != farmer_data["member_number"]:
+            farmer.member_number = farmer_data["member_number"]
+            farmer.cooperative = "Huye"
+            farmer.save(update_fields=["member_number", "cooperative"])
 
-        sectors = {"sector": sector, "other_sector": other_sector}
-        stations = {"station": station, "other_station": other_station}
+        sectors = {"sector_kigoma": sector_kigoma, "sector_mbazi": sector_mbazi}
+        stations = {"station_nyaruguru": station_nyaruguru, "station_kamonyi": station_kamonyi}
         plots_by_code = {}
         for p in SEED_DATA["plots"]:
             plot, _ = Plot.objects.get_or_create(
-                name=p["plot_code"],
                 farmer=farmer,
+                name=p["plot_code"],
                 defaults={
+                    "plot_code": p["plot_code"],
                     "sector": sectors[p["sector"]],
                     "washing_station": stations[p["station"]],
                     "area_hectares": Decimal("0.5"),
@@ -75,6 +88,15 @@ class Command(BaseCommand):
                     "risk_checked_at": timezone.now(),
                 },
             )
+            if plot.plot_code != p["plot_code"]:
+                plot.plot_code = p["plot_code"]
+            plot.sector = sectors[p["sector"]]
+            plot.washing_station = stations[p["station"]]
+            plot.latitude = Decimal(p["lat"])
+            plot.longitude = Decimal(p["lng"])
+            plot.risk_status = Plot.RiskStatus.CLEAR
+            plot.risk_checked_at = timezone.now()
+            plot.save(update_fields=["plot_code", "sector", "washing_station", "latitude", "longitude", "risk_status", "risk_checked_at"])
             plots_by_code[p["plot_code"]] = plot
 
         for d in SEED_DATA["deliveries"]:
@@ -85,12 +107,13 @@ class Command(BaseCommand):
                 grade=d["grade"],
                 defaults={
                     "washing_station": plot.washing_station,
+                    "delivered_on": timezone.now().date(),
                     "delivered_at": timezone.now(),
                     "plot_risk_status": plot.risk_status,
                 },
             )
 
-        self._create_user("field_agent_user", UserProfile.Role.FIELD_AGENT, washing_station=station)
+        self._create_user("field_agent_user", UserProfile.Role.FIELD_AGENT, washing_station=station_nyaruguru)
         self._create_user("exporter_user", UserProfile.Role.EXPORTER_PARTNER)
         self._create_user("auditor_user", UserProfile.Role.COMPLIANCE_AUDITOR)
 

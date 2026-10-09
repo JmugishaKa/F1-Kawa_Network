@@ -48,6 +48,8 @@ class Farmer(models.Model):
     # Personal data under Rwanda's Law No. 058/2021 - never serialized in full;
     # see DECISION_LOG.md and FarmerSerializer for who sees what.
     national_id = models.CharField(max_length=20, blank=True)
+    member_number = models.CharField(max_length=50, blank=True, null=True)
+    cooperative = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -72,6 +74,7 @@ class Plot(models.Model):
 
     farmer = models.ForeignKey(Farmer, on_delete=models.PROTECT, related_name="plots")
     name = models.CharField(max_length=100)
+    plot_code = models.CharField(max_length=100, blank=True, null=True)
     sector = models.ForeignKey(Sector, on_delete=models.PROTECT, related_name="plots")
     washing_station = models.ForeignKey(
         WashingStation, on_delete=models.PROTECT, related_name="plots"
@@ -139,6 +142,7 @@ class Delivery(models.Model):
         validators=[MinValueValidator(Decimal('0.1')), MaxValueValidator(Decimal('5000'))],
     )
     grade = models.CharField(max_length=1, choices=Grade.choices)
+    delivered_on = models.DateField(null=True, blank=True)
     delivered_at = models.DateTimeField()
     recorded_at = models.DateTimeField(auto_now_add=True)
     # Snapshot of the plot's risk status at delivery time (provenance audit trail).
