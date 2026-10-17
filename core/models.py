@@ -73,8 +73,7 @@ class Plot(models.Model):
         CHECK_FAILED = "check_failed", "Check failed (registry unreachable)"
 
     farmer = models.ForeignKey(Farmer, on_delete=models.PROTECT, related_name="plots")
-    name = models.CharField(max_length=100)
-    plot_code = models.CharField(max_length=100, blank=True, null=True)
+    name = models.CharField(max_length=100) # Exposed externally as "plot_code". This can be found in PLotserializer.
     sector = models.ForeignKey(Sector, on_delete=models.PROTECT, related_name="plots")
     washing_station = models.ForeignKey(
         WashingStation, on_delete=models.PROTECT, related_name="plots"
