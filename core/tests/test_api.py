@@ -280,7 +280,8 @@ class DeliveryTests(Base):
         self.assertEqual(ids, sorted(ids, reverse=True))
         self.assertEqual(
             set(body["results"][0]),
-            {"id", "farmer_name", "plot_name", "washing_station", "weight_kg", "grade", "delivered_at", "verified"},
+                     {"id", "farmer_name", "plot_name", "washing_station", "weight_kg", "grade",
+             "delivered_at", "verified", "export_status"},
         )
         page2 = self.client.get(body["next"]).json()
         self.assertEqual(len(page2["results"]), 5)
@@ -297,7 +298,6 @@ class DeliveryTests(Base):
             self.post(plot)
         with self.assertNumQueries(4):
             self.client.get("/api/deliveries/")
-
 
 
 class PriceScheduleTests(Base):

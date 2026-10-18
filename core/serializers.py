@@ -135,13 +135,15 @@ class DeliverySerializer(serializers.ModelSerializer):
     sector = serializers.IntegerField(source="plot.sector_id", read_only=True)
     washing_station = serializers.CharField(source="washing_station.name", read_only=True)
     provenance_verified = serializers.BooleanField(read_only=True)
+    export_status = serializers.ChoiceField(choices=Delivery.ExportStatus.choices, read_only=True)
+    rejection_reason = serializers.CharField(read_only=True, allow_null=True)
     delivered_on = serializers.DateField(required=False, write_only=True)
 
     class Meta:
         model = Delivery
         fields = ["id", "plot", "farmer", "sector", "washing_station", "weight_kg", "grade",
                    "delivered_at", "delivered_on", "recorded_at", "plot_risk_status",
-                   "provenance_verified", "client_ref"]
+                   "provenance_verified", "export_status", "rejection_reason", "client_ref"]
         read_only_fields = ["recorded_at", "plot_risk_status"]
         extra_kwargs = {"delivered_at": {"required": False}}
 
@@ -180,16 +182,16 @@ class DeliverySerializer(serializers.ModelSerializer):
         return data
 
 class DeliveryFeedSerializer(serializers.ModelSerializer):
-    """This is a compact row for the station feed: only what a phone on 2G needs to render a line."""
-
     farmer_name = serializers.CharField(source="plot.farmer.full_name", read_only=True)
     plot_name = serializers.CharField(source="plot.name", read_only=True)
     washing_station = serializers.CharField(source="washing_station.name", read_only=True)
     verified = serializers.BooleanField(source="provenance_verified", read_only=True)
+    export_status = serializers.ChoiceField(choices=Delivery.ExportStatus.choices, read_only=True)
 
     class Meta:
         model = Delivery
-        fields = ["id", "farmer_name", "plot_name","washing_station", "weight_kg", "grade", "delivered_at", "verified"]
+        fields = ["id", "farmer_name", "plot_name", "washing_station", "weight_kg", "grade",
+                   "delivered_at", "verified", "export_status"]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

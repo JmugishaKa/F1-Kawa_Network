@@ -157,6 +157,33 @@ class Delivery(models.Model):
     def provenance_verified(self):
         return self.plot_risk_status == Plot.RiskStatus.CLEAR
 
+    class ExportStatus(models.TextChoices):
+        ASSIGNABLE = "assignable", "Assignable to an export lot"
+        PENDING_VERIFICATION = "pending_verification", "Pending verification"
+        BLOCKED = "blocked", "Blocked"
+
+    @property
+    def export_status(self):
+        """Derived live from the PLOT's current risk_status, never from the
+        delivery's own frozen plot_risk_status snapshot (see DECISION_LOG.md
+        / BUG_REPORT.md - deliveries were stranding with a stale snapshot
+        once a plot's async check resolved after the delivery was recorded).
+        """
+        current = self.plot.risk_status
+        if current == Plot.RiskStatus.CLEAR:
+            return self.ExportStatus.ASSIGNABLE
+        if current == Plot.RiskStatus.PENDING:
+            return self.ExportStatus.PENDING_VERIFICATION
+        return self.ExportStatus.BLOCKED  # FLAGGED or CHECK_FAILED
+
+    @property
+    def rejection_reason(self):
+        current = self.plot.risk_status
+        if current == Plot.RiskStatus.FLAGGED:
+            return "plot flagged for recently cleared land"
+        if current == Plot.RiskStatus.CHECK_FAILED:
+            return "risk check could not be completed after maximum attempts"
+        return None
 
 class PriceSchedule(models.Model):
     season = models.CharField(max_length=20)
