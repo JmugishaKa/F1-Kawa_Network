@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, time as dt_time, timedelta
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -64,36 +64,43 @@ class FarmerSerializer(serializers.ModelSerializer):
 
 
 class PlotSerializer(serializers.ModelSerializer):
+    """`plot_code` stands as the external name for the model's `name` field (found in the F1 Contract).
+    while `sector`/`washing_station` is accepted and returned as plain name strings
+    (Key thing is that the F1/F2 Contracts sent them this way in this work) - resolved to real FK rows in create()."""
+
+    plot_code = serializers.CharField(source="name")
+    sector = serializers.CharField()
+    washing_station = serializers.CharField()
+
     class Meta:
         model = Plot
-        fields = [
-            "id", "farmer", "name", "plot_code", "sector", "washing_station", "area_hectares",
-            "latitude", "longitude", "risk_status", "risk_checked_at", "created_at",
-        ]
+        fields = ["id", "farmer", "plot_code", "sector", "washing_station", "area_hectares",
+                   "latitude", "longitude", "risk_status", "risk_checked_at", "created_at"]
         read_only_fields = ["risk_status", "risk_checked_at", "created_at"]
-        # Replace the auto UniqueTogether error with a clearer one (see validate()).
         validators = []
 
     def validate(self, attrs):
         lat, lng = attrs.get("latitude"), attrs.get("longitude")
         if (lat is None) != (lng is None):
             raise serializers.ValidationError("Provide both latitude and longitude, or neither.")
-
-        if attrs.get("name") is None and attrs.get("plot_code"):
-            attrs["name"] = attrs["plot_code"]
-
         farmer, name = attrs.get("farmer"), attrs.get("name")
         if farmer and name and Plot.objects.filter(farmer=farmer, name=name).exists():
-            raise serializers.ValidationError({"name": "This farmer already has a plot with that name."})
-        # F1 autograder accepts the plot_code field as the stable external identifier.
-        if attrs.get("plot_code") is not None and not str(attrs["plot_code"]).strip():
-            raise serializers.ValidationError({"plot_code": "This field may not be blank."})
+            raise serializers.ValidationError({"plot_code": "This code already exists for this farmer."})
         return attrs
 
+    def create(self, validated_data):
+        sector_name = validated_data.pop("sector")
+        station_name = validated_data.pop("washing_station")
+        sector, _ = Sector.objects.get_or_create(name=sector_name)
+        # Inase, the station already exists under a different sector, we keep its
+        # prior sector rather than silently moving it - see DECISION_LOG.md.
+        station, _ = WashingStation.objects.get_or_create(name=station_name, defaults={"sector": sector})
+        return Plot.objects.create(sector=sector, washing_station=station, **validated_data)
+
     def to_representation(self, instance):
-        """Role-aware coordinates. F2: field_agent/auditor see the real point,
-        exporter_partner sees the sector's derived centroid (see Sector.centroid)."""
         data = super().to_representation(instance)
+        data["sector"] = instance.sector.name
+        data["washing_station"] = instance.washing_station.name
         request = self.context.get("request")
         role = get_role(getattr(request, "user", None)) if request else None
         rule = ROLE_RULES.get(role)
@@ -118,19 +125,24 @@ class RiskCheckAttemptSerializer(serializers.ModelSerializer):
 
 
 class DeliverySerializer(serializers.ModelSerializer):
-    """Full record: used to create a delivery and to read one back."""
+    """This serializer accepts either `delivered_at` (full datetime) or `delivered_on` (a bare
+    date - as instructed in the F1 Contract); either one given, the stored value is
+    always delivered_at. `washing_station` will always be got from the plot, and 
+    never from client input, but IS returned (as the station's name) because F2's scoping checks read it. `farmer` and `sector` are also returned, but not accepted,
+    because F2's scoping checks read it."""
 
     farmer = serializers.IntegerField(source="plot.farmer_id", read_only=True)
     sector = serializers.IntegerField(source="plot.sector_id", read_only=True)
+    washing_station = serializers.CharField(source="washing_station.name", read_only=True)
     provenance_verified = serializers.BooleanField(read_only=True)
+    delivered_on = serializers.DateField(required=False, write_only=True)
 
     class Meta:
         model = Delivery
-        fields = [
-            "id", "plot", "farmer", "sector", "washing_station", "weight_kg", "grade",
-            "delivered_on", "delivered_at", "recorded_at", "plot_risk_status", "provenance_verified", "client_ref",
-        ]
-        read_only_fields = ["washing_station", "recorded_at", "plot_risk_status"]
+        fields = ["id", "plot", "farmer", "sector", "washing_station", "weight_kg", "grade",
+                   "delivered_at", "delivered_on", "recorded_at", "plot_risk_status",
+                   "provenance_verified", "client_ref"]
+        read_only_fields = ["recorded_at", "plot_risk_status"]
         extra_kwargs = {"delivered_at": {"required": False}}
 
     def validate_delivered_at(self, value):
@@ -143,6 +155,13 @@ class DeliverySerializer(serializers.ModelSerializer):
             raise PlotFlagged()
         return plot
 
+    def validate(self, attrs):
+        delivered_on = attrs.pop("delivered_on", None)
+        if "delivered_at" not in attrs and delivered_on is not None:
+            naive = datetime.combine(delivered_on, dt_time.min)
+            attrs["delivered_at"] = timezone.make_aware(naive) if timezone.is_naive(naive) else naive
+        return attrs
+
     def create(self, validated_data):
         plot = validated_data["plot"]
         validated_data.setdefault("delivered_at", timezone.now())
@@ -151,9 +170,6 @@ class DeliverySerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def to_representation(self, instance):
-        """compliance_auditor gets metadata only: price-relevant fields are
-        stripped, not just hidden by permission - a 403 on the whole object
-        would be wrong, since the auditor IS allowed to see the delivery exists."""
         data = super().to_representation(instance)
         request = self.context.get("request")
         role = get_role(getattr(request, "user", None)) if request else None
@@ -163,17 +179,17 @@ class DeliverySerializer(serializers.ModelSerializer):
                 data.pop(field, None)
         return data
 
-
 class DeliveryFeedSerializer(serializers.ModelSerializer):
-    """Compact row for the station feed: only what a phone on 2G needs to render a line."""
+    """This is a compact row for the station feed: only what a phone on 2G needs to render a line."""
 
     farmer_name = serializers.CharField(source="plot.farmer.full_name", read_only=True)
     plot_name = serializers.CharField(source="plot.name", read_only=True)
+    washing_station = serializers.CharField(source="washing_station.name", read_only=True)
     verified = serializers.BooleanField(source="provenance_verified", read_only=True)
 
     class Meta:
         model = Delivery
-        fields = ["id", "farmer_name", "plot_name", "weight_kg", "grade", "delivered_at", "verified"]
+        fields = ["id", "farmer_name", "plot_name","washing_station", "weight_kg", "grade", "delivered_at", "verified"]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
