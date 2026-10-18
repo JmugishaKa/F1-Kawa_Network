@@ -1,0 +1,1222 @@
+openapi: 3.0.3
+info:
+  title: Kawa Network API
+  version: 0.1.0
+  description: Farmer, plot and delivery provenance for coffee washing stations.
+paths:
+  /api/access-log/:
+    get:
+      operationId: access_log_list
+      description: compliance_auditor's read access to the audit trail (Task 4 / matrix
+        'Audit log' column).
+      parameters:
+      - in: query
+        name: action
+        schema:
+          type: string
+          enum:
+          - view_farmer_identity
+          - view_plot_coordinates
+        description: |-
+          * `view_plot_coordinates` - Viewed plot coordinates
+          * `view_farmer_identity` - Viewed farmer identity data
+      - in: query
+        name: object_type
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: role
+        schema:
+          type: string
+      - in: query
+        name: user
+        schema:
+          type: integer
+      tags:
+      - access-log
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAccessLogEntryList'
+          description: ''
+  /api/auth/api-token/:
+    post:
+      operationId: auth_api_token_create
+      description: |-
+        Takes a set of user credentials and returns an access and refresh JSON web
+        token pair to prove the authentication of those credentials.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+  /api/auth/login/:
+    post:
+      operationId: auth_login_create
+      description: |-
+        Session login for the internal cooperative dashboard (Task 2).
+
+        Token/JWT auth (for buyer and registry integrations) is handled separately
+        by djangorestframework-simplejwt at /api/auth/token/ - see urls.py.
+      tags:
+      - auth
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/logout/:
+    post:
+      operationId: auth_logout_create
+      tags:
+      - auth
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      description: Quick 'who am I, what role/station' check - handy for the dashboard
+        and for debugging RBAC.
+      tags:
+      - auth
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/staff-login/:
+    post:
+      operationId: auth_staff_login_create
+      description: |-
+        Session login for the internal cooperative dashboard (Task 2).
+
+        Token/JWT auth (for buyer and registry integrations) is handled separately
+        by djangorestframework-simplejwt at /api/auth/token/ - see urls.py.
+      tags:
+      - auth
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/token/:
+    post:
+      operationId: auth_token_create
+      description: |-
+        Takes a set of user credentials and returns an access and refresh JSON web
+        token pair to prove the authentication of those credentials.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPair'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+  /api/auth/token/refresh/:
+    post:
+      operationId: auth_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/deliveries/:
+    get:
+      operationId: deliveries_list
+      description: |-
+        POST records a delivery (unscoped - see DECISION_LOG.md). GET is matrix-governed:
+        field_agent sees only their station, auditor sees metadata only, newest first, cursor-paginated.
+      parameters:
+      - name: cursor
+        required: false
+        in: query
+        description: The pagination cursor value.
+        schema:
+          type: string
+      - in: query
+        name: delivered_at__gte
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: delivered_at__lte
+        schema:
+          type: string
+          format: date-time
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: plot
+        schema:
+          type: integer
+      - in: query
+        name: washing_station
+        schema:
+          type: integer
+      tags:
+      - deliveries
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDeliveryFeedList'
+          description: ''
+    post:
+      operationId: deliveries_create
+      description: |-
+        POST records a delivery (unscoped - see DECISION_LOG.md). GET is matrix-governed:
+        field_agent sees only their station, auditor sees metadata only, newest first, cursor-paginated.
+      tags:
+      - deliveries
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Delivery'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Delivery'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Delivery'
+        required: true
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+          description: ''
+  /api/deliveries/{id}/:
+    get:
+      operationId: deliveries_retrieve
+      description: |-
+        POST records a delivery (unscoped - see DECISION_LOG.md). GET is matrix-governed:
+        field_agent sees only their station, auditor sees metadata only, newest first, cursor-paginated.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this delivery.
+        required: true
+      tags:
+      - deliveries
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+          description: ''
+  /api/farmers/:
+    get:
+      operationId: farmers_list
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - farmers
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedFarmerList'
+          description: ''
+    post:
+      operationId: farmers_create
+      tags:
+      - farmers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Farmer'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Farmer'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Farmer'
+        required: true
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Farmer'
+          description: ''
+  /api/farmers/{id}/:
+    get:
+      operationId: farmers_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this farmer.
+        required: true
+      tags:
+      - farmers
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Farmer'
+          description: ''
+  /api/plots/:
+    get:
+      operationId: plots_list
+      parameters:
+      - in: query
+        name: farmer
+        schema:
+          type: integer
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: risk_status
+        schema:
+          type: string
+          enum:
+          - check_failed
+          - clear
+          - flagged
+          - pending
+        description: |-
+          * `pending` - Pending
+          * `clear` - Clear
+          * `flagged` - Flagged (recently cleared land)
+          * `check_failed` - Check failed (registry unreachable)
+      - in: query
+        name: sector
+        schema:
+          type: integer
+      - in: query
+        name: washing_station
+        schema:
+          type: integer
+      tags:
+      - plots
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPlotList'
+          description: ''
+    post:
+      operationId: plots_create
+      tags:
+      - plots
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Plot'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Plot'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Plot'
+        required: true
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plot'
+          description: ''
+  /api/plots/{id}/:
+    get:
+      operationId: plots_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this plot.
+        required: true
+      tags:
+      - plots
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plot'
+          description: ''
+  /api/plots/{id}/recheck/:
+    post:
+      operationId: plots_recheck_create
+      description: Re-queue the risk check for a plot that is pending or whose check
+        failed.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this plot.
+        required: true
+      tags:
+      - plots
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plot'
+          description: ''
+  /api/plots/{id}/risk-attempts/:
+    get:
+      operationId: plots_risk_attempts_list
+      description: 'Every registry call made for this plot: the evidence trail.'
+      parameters:
+      - in: query
+        name: farmer
+        schema:
+          type: integer
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this plot.
+        required: true
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: risk_status
+        schema:
+          type: string
+          enum:
+          - check_failed
+          - clear
+          - flagged
+          - pending
+        description: |-
+          * `pending` - Pending
+          * `clear` - Clear
+          * `flagged` - Flagged (recently cleared land)
+          * `check_failed` - Check failed (registry unreachable)
+      - in: query
+        name: sector
+        schema:
+          type: integer
+      - in: query
+        name: washing_station
+        schema:
+          type: integer
+      tags:
+      - plots
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRiskCheckAttemptList'
+          description: ''
+  /api/price-schedule/:
+    get:
+      operationId: price_schedule_list
+      description: Current season's price per kg for each cherry grade, in RWF.
+      tags:
+      - price-schedule
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Price'
+          description: ''
+  /api/sectors/:
+    get:
+      operationId: sectors_list
+      tags:
+      - sectors
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Sector'
+          description: ''
+    post:
+      operationId: sectors_create
+      tags:
+      - sectors
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Sector'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Sector'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Sector'
+        required: true
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sector'
+          description: ''
+  /api/stations/:
+    get:
+      operationId: stations_list
+      parameters:
+      - in: query
+        name: sector
+        schema:
+          type: integer
+      tags:
+      - stations
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WashingStation'
+          description: ''
+    post:
+      operationId: stations_create
+      tags:
+      - stations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WashingStation'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WashingStation'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WashingStation'
+        required: true
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WashingStation'
+          description: ''
+  /api/status/:
+    get:
+      operationId: status_retrieve
+      tags:
+      - status
+      security:
+      - cookieAuth: []
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+components:
+  schemas:
+    AccessLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          readOnly: true
+        role:
+          type: string
+          description: Role at the time of access (roles can change later).
+          maxLength: 24
+        action:
+          $ref: '#/components/schemas/ActionEnum'
+        precision:
+          type: string
+          maxLength: 20
+        object_type:
+          type: string
+          maxLength: 20
+        object_id:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+        sector:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - action
+      - created_at
+      - id
+      - object_id
+      - object_type
+      - precision
+      - role
+      - username
+    ActionEnum:
+      enum:
+      - view_plot_coordinates
+      - view_farmer_identity
+      type: string
+      description: |-
+        * `view_plot_coordinates` - Viewed plot coordinates
+        * `view_farmer_identity` - Viewed farmer identity data
+    Delivery:
+      type: object
+      description: |-
+        This serializer accepts either `delivered_at` (full datetime) or `delivered_on` (a bare
+        date - as instructed in the F1 Contract); either one given, the stored value is
+        always delivered_at. `washing_station` will always be got from the plot, and
+        never from client input, but IS returned (as the station's name) because F2's scoping checks read it. `farmer` and `sector` are also returned, but not accepted,
+        because F2's scoping checks read it.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        plot:
+          type: integer
+        farmer:
+          type: integer
+          readOnly: true
+        sector:
+          type: integer
+          readOnly: true
+        washing_station:
+          type: string
+          readOnly: true
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,2})?$
+        grade:
+          $ref: '#/components/schemas/GradeEnum'
+        delivered_at:
+          type: string
+          format: date-time
+        delivered_on:
+          type: string
+          format: date
+          writeOnly: true
+        recorded_at:
+          type: string
+          format: date-time
+          readOnly: true
+        plot_risk_status:
+          allOf:
+          - $ref: '#/components/schemas/PlotRiskStatusEnum'
+          readOnly: true
+        provenance_verified:
+          type: boolean
+          readOnly: true
+        client_ref:
+          type: string
+          nullable: true
+          maxLength: 64
+      required:
+      - farmer
+      - grade
+      - id
+      - plot
+      - plot_risk_status
+      - provenance_verified
+      - recorded_at
+      - sector
+      - washing_station
+      - weight_kg
+    DeliveryFeed:
+      type: object
+      description: 'This is a compact row for the station feed: only what a phone
+        on 2G needs to render a line.'
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        farmer_name:
+          type: string
+          readOnly: true
+        plot_name:
+          type: string
+          readOnly: true
+        washing_station:
+          type: string
+          readOnly: true
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,2})?$
+        grade:
+          $ref: '#/components/schemas/GradeEnum'
+        delivered_at:
+          type: string
+          format: date-time
+        verified:
+          type: boolean
+          readOnly: true
+      required:
+      - delivered_at
+      - farmer_name
+      - grade
+      - id
+      - plot_name
+      - verified
+      - washing_station
+      - weight_kg
+    Farmer:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        full_name:
+          type: string
+          maxLength: 150
+        member_number:
+          type: string
+          nullable: true
+          maxLength: 50
+        cooperative:
+          type: string
+          nullable: true
+          maxLength: 100
+        phone:
+          type: string
+          pattern: ^\+?\d{9,15}$
+          maxLength: 16
+        national_id:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - full_name
+      - id
+      - national_id
+      - phone
+    GradeEnum:
+      enum:
+      - A
+      - B
+      - C
+      type: string
+      description: |-
+        * `A` - Grade A
+        * `B` - Grade B
+        * `C` - Grade C
+    OutcomeEnum:
+      enum:
+      - clear
+      - flagged
+      - error
+      type: string
+      description: |-
+        * `clear` - Clear
+        * `flagged` - Flagged
+        * `error` - Error
+    PaginatedAccessLogEntryList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessLogEntry'
+    PaginatedDeliveryFeedList:
+      type: object
+      required:
+      - results
+      properties:
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cD00ODY%3D"
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?cursor=cj0xJnA9NDg3
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryFeed'
+    PaginatedFarmerList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Farmer'
+    PaginatedPlotList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Plot'
+    PaginatedRiskCheckAttemptList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskCheckAttempt'
+    Plot:
+      type: object
+      description: |-
+        `plot_code` stands as the external name for the model's `name` field (found in the F1 Contract).
+        while `sector`/`washing_station` is accepted and returned as plain name strings
+        (Key thing is that the F1/F2 Contracts sent them this way in this work) - resolved to real FK rows in create().
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        farmer:
+          type: integer
+        plot_code:
+          type: string
+        sector:
+          type: string
+        washing_station:
+          type: string
+        area_hectares:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+        latitude:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,6})?$
+          nullable: true
+        longitude:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,6})?$
+          nullable: true
+        risk_status:
+          allOf:
+          - $ref: '#/components/schemas/RiskStatusEnum'
+          readOnly: true
+        risk_checked_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - area_hectares
+      - created_at
+      - farmer
+      - id
+      - plot_code
+      - risk_checked_at
+      - risk_status
+      - sector
+      - washing_station
+    PlotRiskStatusEnum:
+      enum:
+      - pending
+      - clear
+      - flagged
+      - check_failed
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `clear` - Clear
+        * `flagged` - Flagged (recently cleared land)
+        * `check_failed` - Check failed (registry unreachable)
+    Price:
+      type: object
+      properties:
+        grade:
+          $ref: '#/components/schemas/GradeEnum'
+        price_per_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,2})?$
+      required:
+      - grade
+      - price_per_kg
+    RiskCheckAttempt:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        attempt:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          description: 1-based, within one check round
+        outcome:
+          $ref: '#/components/schemas/OutcomeEnum'
+        detail:
+          type: string
+          maxLength: 255
+        duration_ms:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+        attempted_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - attempt
+      - attempted_at
+      - id
+      - outcome
+    RiskStatusEnum:
+      enum:
+      - pending
+      - clear
+      - flagged
+      - check_failed
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `clear` - Clear
+        * `flagged` - Flagged (recently cleared land)
+        * `check_failed` - Check failed (registry unreachable)
+    Sector:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 100
+        district:
+          type: string
+          maxLength: 100
+      required:
+      - id
+      - name
+    TokenObtainPair:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+        password:
+          type: string
+          writeOnly: true
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+          readOnly: true
+      required:
+      - access
+      - password
+      - refresh
+      - username
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    WashingStation:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 100
+        sector:
+          type: integer
+      required:
+      - id
+      - name
+      - sector
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
