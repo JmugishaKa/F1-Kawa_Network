@@ -8,3 +8,5 @@ python-dotenv>=1.0
 requests>=2.31
 PyYAML>=6.0
 djangorestframework-simplejwt>=5.3
+pytest>=8.0
+pytest-django>=4.8
