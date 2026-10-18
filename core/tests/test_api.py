@@ -2,6 +2,8 @@ import time
 from decimal import Decimal
 from unittest import mock
 
+
+from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -9,21 +11,19 @@ from rest_framework.test import APITestCase
 
 from core import registry, tasks
 from core.models import Delivery, Farmer, Plot, PriceSchedule, RiskCheckAttempt, Sector, UserProfile, WashingStation
-from core.tests.test_rbac import User
 
+
+User = get_user_model()
 
 class Base(APITestCase):
-    
     def setUp(self):
         self.sector = Sector.objects.create(name="Nyaruguru")
         self.station = WashingStation.objects.create(name="Nyaruguru WS", sector=self.sector)
         self.farmer = Farmer.objects.create(full_name="Jean Claude", phone="0788123456")
 
-
     def login_as_exporter(self):
         """F2 gated GET /api/plots/ and /api/deliveries/ - exporter_partner sees
-        everything unscoped, which matches what the F1 tests expect."""
-        
+        everything unscoped, which matches what these F1-era tests expect."""
         user = User.objects.create_user(username="f1test-exporter", password="x")
         UserProfile.objects.create(user=user, role=UserProfile.Role.EXPORTER_PARTNER)
         self.client.force_login(user)
@@ -35,12 +35,21 @@ class Base(APITestCase):
         )
 
 
+class StatusTests(Base):
+    def test_status_ok(self):
+        r = self.client.get("/api/status/")
+        self.assertEqual(r.status_code, 200)
+        r.json()  # must be valid JSON
+
+
 class FarmerTests(Base):
     def test_register_farmer(self):
-        r = self.client.post("/api/farmers/", {"full_name": "Marie Uwase", "phone": "+250788000111"})
+        r = self.client.post("/api/farmers/", {
+            "full_name": "Marie Uwase", "phone": "+25078860111",
+            "national_id": "1198885011112222", "member_number": "KWA-F-0001", "cooperative": "Huye",
+        })
         self.assertEqual(r.status_code, 201)
-
-
+        self.assertIn("id", r.json())
 
     def test_validation_error_is_structured(self):
         r = self.client.post("/api/farmers/", {"full_name": "M", "phone": "abc"})
@@ -49,19 +58,22 @@ class FarmerTests(Base):
         self.assertIn("phone", r.json()["error"]["fields"])
         self.assertIn("full_name", r.json()["error"]["fields"])
 
-
     def test_duplicate_phone_rejected(self):
+        self.farmer.phone = "0788123456"
+        self.farmer.save()
         r = self.client.post("/api/farmers/", {"full_name": "Someone", "phone": "0788123456"})
         self.assertEqual(r.status_code, 400)
 
+    def test_list_requires_auth(self):
+        self.assertIn(self.client.get("/api/farmers/").status_code, (401, 403))
 
 
 class PlotTests(Base):
-    payload = lambda self, **kw: {
-        "farmer": self.farmer.pk, "name": "Hillside", "sector": self.sector.pk,
-        "washing_station": self.station.pk, "area_hectares": "0.75", **kw,
-    }
-
+    def payload(self, **kw):
+        return {
+            "farmer": self.farmer.pk, "plot_code": "KWA-P-TEST", "sector": self.sector.name,
+            "washing_station": self.station.name, "area_hectares": "0.75", **kw,
+        }
 
 
     @mock.patch("core.tasks.run_risk_check.apply_async")
@@ -71,22 +83,20 @@ class PlotTests(Base):
         self.assertEqual(r.status_code, 201)
         body = r.json()
         self.assertEqual(body["risk_status"], "pending")
-        self.assertEqual(body["sector"], self.sector.pk)
-        self.assertEqual(body["washing_station"], self.station.pk)
+        self.assertEqual(body["plot_code"], "KWA-P-TEST")
+        self.assertEqual(body["sector"], self.sector.name)
+        self.assertEqual(body["washing_station"], self.station.name)
         queued.assert_called_once()
-
 
 
     def test_registration_does_not_wait_for_registry(self):
         with mock.patch("core.registry.check_plot", side_effect=lambda p: time.sleep(5)), \
              mock.patch("core.tasks.run_risk_check.apply_async"):
             start = time.monotonic()
-            
             with self.captureOnCommitCallbacks(execute=True):
                 r = self.client.post("/api/plots/", self.payload())
             self.assertEqual(r.status_code, 201)
             self.assertLess(time.monotonic() - start, 1.0)
-
 
 
     def test_broker_down_does_not_break_registration(self):
@@ -97,8 +107,16 @@ class PlotTests(Base):
         self.assertEqual(Plot.objects.get().risk_status, "pending")
 
 
+    def test_sector_and_station_created_by_name_if_missing(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post("/api/plots/", self.payload(sector="NewSector", washing_station="NewStation"))
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(Sector.objects.filter(name="NewSector").exists())
+        self.assertTrue(WashingStation.objects.filter(name="NewStation", sector__name="NewSector").exists())
+
+
     def test_requires_sector_and_station(self):
-        r = self.client.post("/api/plots/", {"farmer": self.farmer.pk, "name": "X", "area_hectares": "1"})
+        r = self.client.post("/api/plots/", {"farmer": self.farmer.pk, "plot_code": "X", "area_hectares": "1"})
         self.assertEqual(r.status_code, 400)
         fields = r.json()["error"]["fields"]
         self.assertIn("sector", fields)
@@ -110,11 +128,15 @@ class PlotTests(Base):
         self.assertEqual(r.status_code, 400)
 
 
-    def test_duplicate_plot_name_per_farmer(self):
-        self.make_plot()
+    def test_duplicate_plot_code_per_farmer(self):
+        self.make_plot(name="KWA-P-TEST")
         r = self.client.post("/api/plots/", self.payload())
         self.assertEqual(r.status_code, 400)
-        self.assertIn("name", r.json()["error"]["fields"])
+        self.assertIn("plot_code", r.json()["error"]["fields"])
+
+
+    def test_list_requires_auth(self):
+        self.assertIn(self.client.get("/api/plots/").status_code, (401, 403))
 
 
     def test_list_and_filter(self):
@@ -124,9 +146,9 @@ class PlotTests(Base):
         self.assertEqual(r.json()["count"], 1)
 
 
-
     @mock.patch("core.tasks.run_risk_check.apply_async")
     def test_recheck_only_when_pending_or_failed(self, queued):
+        self.login_as_exporter()
         failed = self.make_plot(Plot.RiskStatus.CHECK_FAILED)
         clear = self.make_plot(Plot.RiskStatus.CLEAR, name="Other")
         with self.captureOnCommitCallbacks(execute=True):
@@ -145,6 +167,7 @@ class RiskCheckTaskTests(Base):
         self.assertIsNotNone(plot.risk_checked_at)
         self.assertEqual(plot.risk_attempts.get().outcome, "clear")
 
+
     def test_failure_records_attempt_and_backs_off(self):
         plot = self.make_plot()
         with mock.patch("core.registry.check_plot", side_effect=registry.RegistryUnavailable("down")):
@@ -153,6 +176,7 @@ class RiskCheckTaskTests(Base):
         plot.refresh_from_db()
         self.assertEqual(plot.risk_status, "pending")
         self.assertEqual(RiskCheckAttempt.objects.filter(plot=plot, outcome="error").count(), 2)
+
 
     @override_settings(RISK_MAX_ATTEMPTS=3)
     def test_gives_up_after_max_attempts(self):
@@ -169,6 +193,7 @@ class RiskCheckTaskTests(Base):
             tasks.perform_risk_check(plot.pk)
         call.assert_not_called()
 
+
     def test_attempts_endpoint(self):
         self.login_as_exporter()
         plot = self.make_plot()
@@ -179,9 +204,12 @@ class RiskCheckTaskTests(Base):
 
 
 class DeliveryTests(Base):
-    
     def post(self, plot, **kw):
         return self.client.post("/api/deliveries/", {"plot": plot.pk, "weight_kg": "42.5", "grade": "A", **kw})
+
+
+    def test_list_requires_auth(self):
+        self.assertIn(self.client.get("/api/deliveries/").status_code, (401, 403))
 
 
     def test_record_delivery_carries_provenance(self):
@@ -192,8 +220,15 @@ class DeliveryTests(Base):
         self.assertEqual(body["plot"], plot.pk)
         self.assertEqual(body["farmer"], self.farmer.pk)
         self.assertEqual(body["sector"], self.sector.pk)
-        self.assertEqual(body["washing_station"], self.station.pk)
+        self.assertEqual(body["washing_station"], self.station.name)
         self.assertTrue(body["provenance_verified"])
+
+
+    def test_accepts_delivered_on_date(self):
+        plot = self.make_plot(Plot.RiskStatus.CLEAR)
+        r = self.post(plot, delivered_on="2026-03-14")
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(r.json()["delivered_at"].startswith("2026-03-14"))
 
 
     def test_unverified_plot_can_still_deliver_but_is_marked(self):
@@ -243,19 +278,26 @@ class DeliveryTests(Base):
         self.assertNotIn("count", body)
         ids = [d["id"] for d in body["results"]]
         self.assertEqual(ids, sorted(ids, reverse=True))
-        self.assertEqual(set(body["results"][0]), {"id", "farmer_name", "plot_name", "weight_kg", "grade", "delivered_at", "verified"})
+        self.assertEqual(
+            set(body["results"][0]),
+            {"id", "farmer_name", "plot_name", "washing_station", "weight_kg", "grade", "delivered_at", "verified"},
+        )
         page2 = self.client.get(body["next"]).json()
         self.assertEqual(len(page2["results"]), 5)
         self.assertFalse(set(ids) & {d["id"] for d in page2["results"]})
 
 
     def test_feed_query_count_is_constant(self):
+        """O(1) per page. F2 added 3 fixed auth queries (session, user, profile) -
+        the role lookup is cached per-request by Django's OneToOne descriptor, so
+        it does NOT scale with row count."""
         self.login_as_exporter()
         plot = self.make_plot(Plot.RiskStatus.CLEAR)
         for i in range(10):
             self.post(plot)
         with self.assertNumQueries(4):
             self.client.get("/api/deliveries/")
+
 
 
 class PriceScheduleTests(Base):
@@ -267,7 +309,7 @@ class PriceScheduleTests(Base):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["season"], "2026")
         self.assertEqual(len(r.json()["prices"]), 2)
-        
-           
+
+
     def test_empty_schedule(self):
         self.assertEqual(self.client.get("/api/price-schedule/").json()["prices"], [])
