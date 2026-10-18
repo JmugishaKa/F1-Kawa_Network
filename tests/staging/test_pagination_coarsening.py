@@ -11,9 +11,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from core.models import Farmer, Plot
+from core.models import Farmer, Plot, Sector, WashingStation
 
-PAGE_SIZE = 20  # config/settings.py REST_FRAMEWORK["PAGE_SIZE"]
+PAGE_SIZE = 50  # config/pagination.py StandardPagination.page_size
 
 
 def _next_path(body):
@@ -34,16 +34,19 @@ def test_coarsened_coordinates_hold_on_every_page(as_role):
     farmer = Farmer.objects.first()
     assert farmer is not None, "seed_rbac_fixtures did not create the seed farmer"
 
-    # The fixture command only creates 4 plots -- not enough to force a
-    # second page at PAGE_SIZE=20. Add enough plots to guarantee pagination
-    # actually exercises more than the first page.
+    kigoma = Sector.objects.get(name="Kigoma")
+    mbazi = Sector.objects.get(name="Mbazi")
+    nyaruguru = WashingStation.objects.get(name="Nyaruguru")
+    kamonyi = WashingStation.objects.get(name="Kamonyi")
+
     for i in range(2 * PAGE_SIZE):
-        sector = "Kigoma" if i % 2 == 0 else "Mbazi"
+        sector = kigoma if i % 2 == 0 else mbazi
+        station = nyaruguru if sector == kigoma else kamonyi
         Plot.objects.create(
             farmer=farmer,
-            plot_code=f"KWA-STAGING-{i:03d}",
+            name=f"KWA-STAGING-{i:03d}",
             sector=sector,
-            washing_station="Nyaruguru" if sector == "Kigoma" else "Kamonyi",
+            washing_station=station,
             latitude=Decimal("-2.000000") + Decimal(i) / Decimal(1000),
             longitude=Decimal("29.000000") + Decimal(i) / Decimal(1000),
             area_hectares=Decimal("1.00"),
@@ -61,14 +64,14 @@ def test_coarsened_coordinates_hold_on_every_page(as_role):
         assert results, f"page {pages_walked + 1} returned no results"
 
         for returned in results:
-            raw = Plot.objects.get(plot_code=returned["plot_code"])
+            raw = Plot.objects.get(name=returned["plot_code"])
             returned_point = (str(returned["latitude"]), str(returned["longitude"]))
             raw_point = (str(raw.latitude), str(raw.longitude))
             assert returned_point != raw_point, (
                 f"plot {returned['plot_code']} on page {pages_walked + 1} returned its raw "
                 "stored coordinate to exporter_partner instead of a coarsened one"
             )
-            seen_by_sector.setdefault(raw.sector, set()).add(returned_point)
+            seen_by_sector.setdefault(raw.sector_id, set()).add(returned_point)
 
         pages_walked += 1
         path = _next_path(body)
